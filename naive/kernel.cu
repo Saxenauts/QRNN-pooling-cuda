@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include "debug.h"
+#include "../debug.h"
 
 #define THREADS_PER_BLOCK_X 16
 #define THREADS_PER_BLOCK_Y 16
@@ -9,17 +9,27 @@
 #define BATCH_SIZE 64
 
 /* Macro for index calculations */
-#define INDX( time_step, batch_index, col ) ( (time_step + BATCH_SIZE * (batch_index + INPUT_DIM * col) )
+#define INDX( time_step, batch_index, col ) ( (time_step + BATCH_SIZE * (batch_index + INPUT_DIM * col)) )
 
-__global__ void fpool(double* h, double* z, double* f) {
+__global__ void fpool_GPU(double* h,  const double* z, const double* f) {
 	for(int t = 1; t < MAX_TIME_STEP; t++) {
 		// detemine this thread's index in the batch and input dims
 		const int mybatch = blockDim.x * blockIdx.x + threadIdx.x;
 		const int mycol = blockDim.y * blockIdx.y + threadIdx.y;
 
 		if(mybatch < BATCH_SIZE && mycol < INPUT_DIM) {
-			h[INDX(t, mybatch, mycol)] = f[INDX(t, mybatch, mycol)]	* h[INDX(t-1, mybatch, mycol)] +
-									(1 - f[INDX(t, mybatch, mycol)]) * z[INDX(t, mybatch, mycol)];
+			h[INDX(t, mybatch, mycol)] = f[INDX(t, mybatch, mycol)]	* h[INDX(t-1, mybatch, mycol)] + (1 - f[INDX(t, mybatch, mycol)]) * z[INDX(t, mybatch, mycol)];
+		}
+	}
+	return;
+}
+
+void fpool_CPU(double* h,  const double* z, const double* f) {
+	for(int t = 1; t < MAX_TIME_STEP; t++) {
+		for(int row = 1; row < BATCH_SIZE; row++) {
+			for(int col = 1; col < BATCH_SIZE; col++) {
+				h[INDX(t, row, col)] = f[INDX(t, row, col)]	* h[INDX(t-1, row, col)] + (1 - f[INDX(t, row, col)]) * z[INDX(t, row, col)];
+			}
 		}
 	}
 	return;
@@ -52,23 +62,33 @@ int main(int args, char* argv[])
 	memset(h, 0, MAX_TIME_STEP);
 	
 	dim3 threads( THREADS_PER_BLOCK_X, THREADS_PER_BLOCK_Y, 1 );
-	dim3 blocks( size / THREADS_PER_BLOCK_X + 1, 
-			   size / THREADS_PER_BLOCK_Y + 1, 1 );
+	dim3 blocks( BATCH_SIZE / THREADS_PER_BLOCK_X + 1, 
+			   INPUT_DIM / THREADS_PER_BLOCK_Y + 1, 1 );
 
-	float elapsedTime;
+	/*float elapsedTime;*/
+	/*cudaEvent_t start, stop;*/
+	/*checkCUDA( cudaEventCreate( &start ) );*/
+	/*checkCUDA( cudaEventCreate( &stop ) );*/
+	/*checkCUDA( cudaEventRecord( start, 0 ) );*/
 
-	checkCUDA( cudaEventRecord( start, 0 ) );
+	/*fpool_GPU<<< blocks, threads >>> (h, z, f);*/
+	/*checkKERNEL();*/
+	fpool_CPU(h, z, f);
 
-	fpool<<< blocks, threads >>> (h, z, f)
-
-	checkCUDA( cudaEventRecord( stop, 0 ) );
-	checkCUDA( cudaEventSynchronize( stop ) );
-	checkCUDA( cudaEventElapsedTime( &elapsedTime, start, stop ) );
+	/*checkCUDA( cudaEventRecord( stop, 0 ) );*/
+	/*checkCUDA( cudaEventSynchronize( stop ) );*/
+	/*checkCUDA( cudaEventElapsedTime( &elapsedTime, start, stop ) );*/
 
 	cudaDeviceSynchronize();
-	for(int i = 0; i<MAX_TIME_STEP; i++) {
-		printf("%d: A+B = %f\n", i, z[i]);
+
+
+	for(int i=0; i<BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM; i++) {
+		printf("%f\n", h[i]);
 	}
+
 	cudaFree(h);
+	cudaFree(z);
+	cudaFree(f);
+
 	return 0;
 }

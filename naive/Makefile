@@ -1,4 +1,4 @@
-include make.common
+include ../make.common
 BIN=x.qrnn
 NVCC=nvcc
 NVOPTS=-O3 $(ARCH) -DDEBUG
