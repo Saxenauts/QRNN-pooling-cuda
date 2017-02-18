@@ -4,30 +4,43 @@
 #define THREADS_PER_BLOCK_X 32
 #define THREADS_PER_BLOCK_Y 32
 
-#define MAX_TIME_STEP 30
-#define INPUT_DIM 128
-#define BATCH_SIZE 1000
+#define MAX_TIME_STEP 50
+#define INPUT_DIM 1024
+#define BATCH_SIZE 128
 
 /* Macro for index calculations */
 #define INDX( batch_index, col, time_step ) ( (batch_index + BATCH_SIZE * (col + INPUT_DIM * time_step)) )
 
 __global__ void fpool_GPU(float* h,  const float* z, const float* f) {
 
-	__shared__ float smem_h[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
-	__shared__ float smem_z[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
-	__shared__ float smem_f[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
-
 	const int mybatch = blockDim.x * blockIdx.x + threadIdx.x;
 	const int mycol = blockDim.y * blockIdx.y + threadIdx.y;
 
+
+	// read in all the prev indices we will need from h?
+
 	for(int t = 1; t < MAX_TIME_STEP; t++) {
 		// detemine this thread's index in the batch and input dims
+		__shared__ float smem_h[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
+		__shared__ float smem_z[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
+		__shared__ float smem_f[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
 
 		int index = INDX(mybatch, mycol, t);
 		int prev_index = INDX(mybatch, mycol, (t-1));
 
+	    if(mybatch < BATCH_SIZE && mycol < INPUT_DIM) {
+			smem_h[threadIdx.x][threadIdx.y] = 
+			  h[prev_index];
+			smem_z[threadIdx.x][threadIdx.y] = 
+			  z[index];
+			smem_f[threadIdx.x][threadIdx.y] = 
+			  f[index];
+		}
+
+		__syncthreads();
+
 		if(mybatch < BATCH_SIZE && mycol < INPUT_DIM) {
-			h[index] = f[index] * h[prev_index] + (1 - f[index]) * z[index];
+			h[index] = smem_f[threadIdx.x][threadIdx.y]	* smem_h[threadIdx.x][threadIdx.y] + (1 - smem_f[threadIdx.x][threadIdx.y]) * smem_z[threadIdx.x][threadIdx.y];
 		}
 	}
 	return;

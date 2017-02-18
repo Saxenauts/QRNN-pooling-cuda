@@ -4,37 +4,40 @@
 #define THREADS_PER_BLOCK_X 32
 #define THREADS_PER_BLOCK_Y 32
 
-#define MAX_TIME_STEP 30
-#define INPUT_DIM 128
-#define BATCH_SIZE 1000
+#define MAX_TIME_STEP 50
+#define INPUT_DIM 1024
+#define BATCH_SIZE 128
 
 /* Macro for index calculations */
-#define INDX( time_step, batch_index, col ) ( (time_step + MAX_TIME_STEP * (batch_index + BATCH_SIZE * col)) )
+#define INDX( batch_index, col, time_step ) ( (batch_index + BATCH_SIZE * (col + INPUT_DIM * time_step)) )
 
-__global__ void fpool_GPU(double* h,  const double* z, const double* f) {
+__global__ void fpool_GPU(float* h,  const float* z, const float* f) {
+
+	const int mybatch = blockDim.x * blockIdx.x + threadIdx.x;
+	const int mycol = blockDim.y * blockIdx.y + threadIdx.y;
+
+	// read in all the prev indices we will need from h?
 
 	for(int t = 1; t < MAX_TIME_STEP; t++) {
 		// detemine this thread's index in the batch and input dims
-		const int mybatch = blockDim.x * blockIdx.x + threadIdx.x;
-		const int mycol = blockDim.y * blockIdx.y + threadIdx.y;
 
-		int index = INDX(t, mybatch, mycol);
-		int prev_index = INDX(t-1, mybatch, mycol);
+		int index = INDX(mybatch, mycol, t);
+		int prev_index = INDX(mybatch, mycol, (t-1));
 
 		if(mybatch < BATCH_SIZE && mycol < INPUT_DIM) {
-			h[index] = f[index]	* h[prev_index] + (1 - f[index]) * z[index];
+			h[index] = f[index] * h[prev_index] + (1 - f[index]) * z[index];
 		}
 	}
 	return;
 }
 
-void fpool_CPU(double* h,  const double* z, const double* f) {
+void fpool_CPU(float* h,  const float* z, const float* f) {
 	for(int t = 1; t < MAX_TIME_STEP; t++) {
 		for(int row = 0; row < BATCH_SIZE; row++) {
 			for(int col = 0; col < INPUT_DIM; col++) {
-				int index = INDX(t, row, col);
-				int prev_index = INDX(t-1, row, col);
-				h[index] = f[index]	* h[prev_index] + (1 - f[index]) * z[index];
+				int index = INDX(row, col, t);
+				int prev_index = INDX(row, col, (t-1));
+				h[index] = f[index] * h[prev_index] + (1 - f[index]) * z[index];
 			}
 		}
 	}
@@ -50,25 +53,26 @@ int main(int args, char* argv[])
 	printf("Using GPU %d: %s\n", dev, deviceProp.name );
 
 	// hidden state
-	double *h;
-	cudaMallocManaged(&h, BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM * sizeof(double));
+	float *h;
+	cudaMallocManaged(&h, BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM * sizeof(float));
 	// convolution outputs
-	double *z;
-	double *f;
-	cudaMallocManaged(&z, BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM * sizeof(double));
-	cudaMallocManaged(&f, BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM * sizeof(double));
+	float *z;
+	float *f;
+	cudaMallocManaged(&z, BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM * sizeof(float));
+	cudaMallocManaged(&f, BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM * sizeof(float));
 
+	// set seed
 	srand(37);
 	// initialize conv outputs
 	for(int i=0; i<BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM; i++) {
-		z[i] = double(rand()) / (double(RAND_MAX) + 1.0);
-		f[i] = double(rand()) / (double(RAND_MAX) + 1.0);
+		z[i] = float(rand()) / (float(RAND_MAX) + 1.0);
+		f[i] = float(rand()) / (float(RAND_MAX) + 1.0);
 	}
 
 	/* Naive GPU Test */
 
 	// set pooling initial state to zero
-	memset(h, 0, MAX_TIME_STEP);
+	memset(h, 0, MAX_TIME_STEP * BATCH_SIZE * INPUT_DIM * sizeof(float));
 	
 	dim3 threads( THREADS_PER_BLOCK_X, THREADS_PER_BLOCK_Y, 1 );
 	dim3 blocks( BATCH_SIZE / THREADS_PER_BLOCK_X + 1, 
@@ -96,7 +100,7 @@ int main(int args, char* argv[])
 	}
 
 	/* CPU Test */
-	memset(h, 0, MAX_TIME_STEP);
+	memset(h, 0, MAX_TIME_STEP * BATCH_SIZE * INPUT_DIM * sizeof(float));
 
 	checkCUDA( cudaEventRecord( start, 0 ) );
 
@@ -113,8 +117,10 @@ int main(int args, char* argv[])
 	}
 
 	double error = gpu_sum - cpu_sum;
+	printf("gpu sum %f\n", gpu_sum);
+	printf("cpu sum %f\n", cpu_sum);
 	printf("error is %f\n", error);
-	if(error > 10)printf("FAIL\n");
+	if(error > 10 || error < -10) printf("FAIL\n");
 	else printf("PASS\n");
 
 	cudaFree(h);
