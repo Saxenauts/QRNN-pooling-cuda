@@ -16,10 +16,7 @@ __global__ void fpool_GPU(float* h,  const float* z, const float* f) {
 	const int mybatch = blockDim.x * blockIdx.x + threadIdx.x;
 	const int mycol = blockDim.y * blockIdx.y + threadIdx.y;
 
-	// read in all the prev indices we will need from h?
-
 	for(int t = 1; t < MAX_TIME_STEP; t++) {
-		// detemine this thread's index in the batch and input dims
 
 		int index = INDX(mybatch, mycol, t);
 		int prev_index = INDX(mybatch, mycol, (t-1));

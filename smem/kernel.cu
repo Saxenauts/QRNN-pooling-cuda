@@ -1,29 +1,29 @@
 #include <stdio.h>
 #include "../debug.h"
 
-#define THREADS_PER_BLOCK_X 8
-#define THREADS_PER_BLOCK_Y 8
+#define THREADS_PER_BLOCK_X 32
+#define THREADS_PER_BLOCK_Y 32
 
 #define MAX_TIME_STEP 50
 #define INPUT_DIM 1024
 #define BATCH_SIZE 128
 
 /* Macro for index calculations */
-#define INDX( batch_index, col, time_step ) ( (batch_index + BATCH_SIZE * (col + INPUT_DIM * time_step)) )
+#define INDX( time_step, batch_index, col ) ( (time_step + MAX_TIME_STEP * (batch_index + BATCH_SIZE * col)) )
 
 __global__ void fpool_GPU(float* h,  const float* z, const float* f) {
-
-	const int mybatch = blockDim.x * blockIdx.x + threadIdx.x;
-	const int mycol = blockDim.y * blockIdx.y + threadIdx.y;
 
 	__shared__ float smem_h[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
 	__shared__ float smem_z[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
 	__shared__ float smem_f[THREADS_PER_BLOCK_X][THREADS_PER_BLOCK_Y+1];
 
 	for(int t = 1; t < MAX_TIME_STEP; t++) {
+		// detemine this thread's index in the batch and input dims
+		const int mybatch = blockDim.x * blockIdx.x + threadIdx.x;
+		const int mycol = blockDim.y * blockIdx.y + threadIdx.y;
 
-		int index = INDX(mybatch, mycol, t);
-		int prev_index = INDX(mybatch, mycol, (t-1));
+		int index = INDX(t, mybatch, mycol);
+		int prev_index = INDX(t-1, mybatch, mycol);
 
 	    if(mybatch < BATCH_SIZE && mycol < INPUT_DIM) {
 			smem_h[threadIdx.x][threadIdx.y] = 
@@ -47,9 +47,9 @@ void fpool_CPU(float* h,  const float* z, const float* f) {
 	for(int t = 1; t < MAX_TIME_STEP; t++) {
 		for(int row = 0; row < BATCH_SIZE; row++) {
 			for(int col = 0; col < INPUT_DIM; col++) {
-				int index = INDX(row, col, t);
-				int prev_index = INDX(row, col, (t-1));
-				h[index] = f[index] * h[prev_index] + (1 - f[index]) * z[index];
+				int index = INDX(t, row, col);
+				int prev_index = INDX(t-1, row, col);
+				h[index] = f[index]	* h[prev_index] + (1 - f[index]) * z[index];
 			}
 		}
 	}
@@ -73,7 +73,6 @@ int main(int args, char* argv[])
 	cudaMallocManaged(&z, BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM * sizeof(float));
 	cudaMallocManaged(&f, BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM * sizeof(float));
 
-	// set seed
 	srand(37);
 	// initialize conv outputs
 	for(int i=0; i<BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM; i++) {
@@ -106,7 +105,7 @@ int main(int args, char* argv[])
 	fprintf(stdout, "Total time GPU is %f sec\n", elapsedTime / 1000.0f );
 
 
-	double gpu_sum = 0;
+	float gpu_sum = 0;
 	for(int i=0; i<BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM; i++) {
 		gpu_sum += h[i];
 	}
@@ -123,16 +122,15 @@ int main(int args, char* argv[])
 	checkCUDA( cudaEventElapsedTime( &elapsedTime, start, stop ) );
 	fprintf(stdout, "Total time CPU is %f sec\n", elapsedTime / 1000.0f );
 
-	double cpu_sum = 0;
+	float cpu_sum = 0;
 	for(int i=0; i<BATCH_SIZE * MAX_TIME_STEP * INPUT_DIM; i++) {
 		cpu_sum += h[i];
 	}
 
-	double error = gpu_sum - cpu_sum;
-	printf("gpu sum %f\n", gpu_sum);
-	printf("cpu sum %f\n", cpu_sum);
+	float error = gpu_sum - cpu_sum;
+	printf("cpu_sum %f\n", cpu_sum);
 	printf("error is %f\n", error);
-	if(error > 10 || error < -10) printf("FAIL\n");
+	if(error > 10)printf("FAIL\n");
 	else printf("PASS\n");
 
 	cudaFree(h);
